@@ -1,0 +1,76 @@
+version: 2.1
+orbs:
+  aws-elastic-beanstalk: circleci/aws-elastic-beanstalk@2.0.1
+executors:
+  docker-executor:
+    docker:
+      - image: cimg/base:2022.09
+
+jobs:
+  test:
+    executor: docker-executor
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.24
+          docker_layer_caching: true
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+      - run:
+          name: Build Docker image
+          command: docker build -t anaks/react-test -f ./client/Dockerfile.dev ./client
+      - run:
+          name: Run tests
+          command: docker run -e CI=true anaks/react-test npm run test
+  prodbuild:
+    executor: docker-executor
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 20.10.24
+          docker_layer_caching: true
+      - run:
+          name: Install Docker client
+          command: |
+            set -x
+      - run:
+          name: Build Docker image
+          command: |
+            docker build -t anaksct/multi-client ./client
+            docker build -t anaksct/multi-nginx ./nginx
+            docker build -t anaksct/multi-server ./server
+            docker build -t anaksct/multi-worker ./worker
+      - run:
+          name: Log in to Docker Hub
+          command: echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_ID}" --password-stdin
+      - run:
+          name: Push Docker images to Docker Hub
+          command: |
+            docker push anaksct/multi-client
+            docker push anaksct/multi-nginx
+            docker push anaksct/multi-server
+            docker push anaksct/multi-worker
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - test
+      - prodbuild:
+          requires:
+            - test
+          filters:
+            branches:
+              only: main
+      - aws-elastic-beanstalk/deploy:
+          context: aws-creds
+          environment-name: Multi-docker-env
+          application-name: multi-docker
+          requires:
+            - prodbuild
+          label: sample
+          filters:
+            branches:
+              only: main
